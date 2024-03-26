@@ -30,7 +30,7 @@ def convert_to_jsonl(input_file, output_file):
                 f.write('\n')  # Add a newline character to separate each object
 
 # Example usage:
-# python convert_to_jsonl ./HumanEval/HumanEvalComm.json ./HumanEval/HumanEvalComm.jsonl
+# python json_to_jsonl ./HumanEval/HumanEvalComm.json ./HumanEval/HumanEvalComm.jsonl
 if __name__ == "__main__":
     if len(sys.argv) != 3:
         print("Usage: python convert_to_jsonl.py input_file output_file")

@@ -23,6 +23,8 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, set_seed
 set_seed(42)
 
 
+B_INST_CLLAMA, E_INST_CLLAMA = "[INST]", "[/INST]"
+B_SYS_CLLAMA, E_SYS_CLLAMA = "<<SYS>>\n", "\n<</SYS>>\n\n"
 openai.api_key = os.environ['OPENAI_KEY']
 PROMPT_START_0 = 'Generate Python3 code (Markdown):\n'
 PROMPT_START_1 = 'Generate either Python3 code only (Markdown) or no code:\n'
@@ -30,11 +32,18 @@ PROMPT_START_2 = 'Generate either Python3 code only (Markdown) or ask questions:
 PROMPT_START_3 = 'You are an expert software developer. Generate Python3 code (code must has Markdown in response) in below information. Alternatively, you can ask clarifying questions: \n'
 PROMPT_START_3_v2 = 'You are an expert software developer who writes high quality code. With below information, please either generate Python3 code (Respond directly with code only with markdown), or ask clarifying questions: \n'
 
-PROMPT_EVALUATE_QUESTIONS = 'The original description of a coding problem is modified so that the requirements become inconsistent, incomplete, or ambiguous. Given the modified description, some clarifying questions were raised to clarify the description. Given the original and modified problem description, evaluate the quality of the questions. Please provide an integer representing the quality of questions (3: Good questions that recover all missing info. 2: Fair questions that recover some missing info. 1: Bad questions or irrelevant content).\n  QUALITY=[your int] \n Please also provide answers to the questions to recover the missing requirements! Be sure to add what is new or different in the original descrpition in your answer, compared with the modified problem description! \n ANSWERS=```[your answer]```  \n Please strictly follow the format QUALITY=[the int] and ANSWERS=```[the answer]``` in the response! Surround your answer with markup! \n\n ### Questions: {clarifying_questions} \n ### Problem Description: {problem} \n ### Original Description: {missing_information} \n'
+PROMPT_EVALUATE_QUESTIONS_V1 = 'The original description of a coding problem is modified so that the requirements become inconsistent, incomplete, or ambiguous. Given the modified description, some clarifying questions were raised to clarify the description. Given the original and modified problem description, evaluate the quality of the questions. Please provide an integer representing the quality of questions (3: Good questions that recover all missing info. 2: Fair questions that recover some missing info. 1: Bad questions or irrelevant content).\n  QUALITY=[your int] \n Please also provide answers to the questions to recover the missing requirements! Be sure to add what is new or different in the original descrpition in your answer, compared with the modified problem description! \n ANSWERS=```[your answer]```  \n Please strictly follow the format QUALITY=[the int] and ANSWERS=```[the answer]``` in the response! Surround your answer with markup! \n\n ### Questions: {clarifying_questions} \n ### Problem Description: {problem} \n ### Original Description: {missing_information} \n'
+PROMPT_EVALUATE_QUESTIONS_V2 = 'The original description of a coding problem is modified so that the requirements become inconsistent, incomplete, or ambiguous. Given the modified description, some clarifying questions were raised to clarify the description. Given the original and modified problem description, evaluate the quality of the questions. Please provide an integer representing the quality of questions (3: Good questions that recover all missing info. 2: Fair questions that recover some missing info. 1: Bad questions or irrelevant content).\n  QUALITY=[your int] \n Please also provide answers to the questions to recover the missing requirements! Be sure to add what is new or different in the original descrpition in your answer, compared with the modified problem description! \n ANSWERS=```[your answer]```  \n Please strictly follow the format QUALITY=[the int] and ANSWERS=```[the answer]``` in the response! Surround your answer with markup! \n\n ### Questions: {clarifying_questions} \n ### Problem Description: {problem} \n ### Original Description: {missing_information} \n'
+# pretty bad prompt as it returns code in answers...
+PROMPT_EVALUATE_QUESTIONS_V3 = 'The original description of a coding problem is modified so that the requirements become incomplete, inconsistent, or ambiguous. Given the modified description, some clarifying questions may be raised to clarify the description. Provide answers to the questions to recover the requirements in the original problem description compared to the modified one. Be sure to return empty answers if there is no valid clarifying question or code with markup! \n ANSWERS=```[your answer]```  \n Please also provide an integer representing the quality of clarifying questions (3: Good questions that recover the modified requirements. 2: Fair questions but they cannot help recover the modified requirements. 1: No valid questions).\n  QUALITY=[your int] \n Please strictly follow the format ANSWERS=```[the answer]``` and QUALITY=[the int] in the response! Surround your answer with markup! \n ### ORIGINAL PROBLEM DESCRIPTION:\n {missing_information} \n ### MODIFIED PROBLEM DESCRIPTION:\n {problem} \n ### CLARIFYING QUESTIONS:\n{clarifying_questions} \n'
+
+PROMPT_EVALUATE_QUESTIONS = 'The original description of a coding problem is modified so that the requirements become inconsistent, incomplete, or ambiguous. Given the modified description, some clarifying questions were raised to clarify the description. Given the original and modified problem description, evaluate the quality of the clarifying questions. Please provide an integer representing the quality of questions (3: Good questions that recover the modified requirements; 2: Fair questions but they cannot help recover the modified requirements; 1: No questions).\n  QUALITY=[your int] \n Please also provide answers to the clarifying questions to recover the modified requirements in the original problem description compared to the modified one. If there is no clarifying questions at all, return empty answers. \n ANSWERS=```[your answer]```  \n Please strictly follow the format QUALITY=[the int] and ANSWERS=```[the answer]``` in the response! Surround your answer with markdown! \n\n ### Questions: {clarifying_questions} \n ### Modified Problem Description: {problem} \n ### Original Description: {missing_information} \n'
+
 PROMPT_2ND_ROUND = '\n Given above conversations, generate Python code directly (Markdown) to solve the coding problem:\n'
 OK_PROMPT_CODEGEN = 'Generate Python code directly (Markdown) to solve the coding problem. \n\n'
 OK_PROMPT_CLARIFY_Q = 'Given the programming problem, ask clarifying questions if the requirements in the given problem description are incomplete, inconsistent or ambiguous for solving the problem correctly and passing the tests. \n If no need to ask clarifying questions, return strictly \'NO_QUESTIONS\' only. Otherwise, return the clarifying questions. \n\n ### Problem: \n {problem}'
 OK_PROMPT_CLARIFY_Q_V1 = 'Given the coding problem description and the generated code above, decide whether to ask clarifying questions that are necessary to solve the problem correctly. \n If no need to ask clarifying questions, return strictly \'NO_QUESTIONS\' only. Otherwise, return the clarifying questions. \n\n'
+OK_MODEL = 'gpt-3.5-turbo-0125'
 
 # Instruction-tuned Models and Foundation Models have different nl_2_pl/pl_2_nl prompts and functions
 INSTRUCTION_MODELS = [
@@ -57,6 +66,41 @@ FOUNDATION_MODELS = [
 
 
 # prompt settings
+CODELLAMA_NL_2_PL_HUMANEVAL = [
+    {  # Instructions
+        "role": "system",
+        "content": PROMPT_START_3_v2
+        + " Note that if you decide to generate code, please respond directly with code only with markdown! You need to return the complete function! Please only return code surrounded by markdown! Don't write down any thought processes!  \n\n",
+    },
+    {  # One-Shot Example: user input = function signature + problem description in docstring format
+        "role": "user",
+        "content": 'from typing import List\n\n\ndef has_close_elements(numbers: List[float], threshold: float) -> bool:\n    '
+        + '"""Check if in given list of numbers, are any two numbers closer to each other than\n    given threshold.\n    '
+        + '>>> has_close_elements([1.0, 2.0, 3.0], 0.5)\n    False\n    '
+        + '>>> has_close_elements([1.0, 2.8, 3.0, 4.0, 5.0, 2.0], 0.3)\n    True\n    """\n',
+    },
+    {  # One-Shot Example: model output = solution
+        "role": "assistant",
+        "content": '```python\ndef candidate(numbers: List[float], threshold: float) -> bool:\n    for i in range(len(numbers)):\n        for j in range(i+1, len(numbers)):\n            if abs(numbers[i] - numbers[j]) <= threshold:\n                return True\n    return False\n```',
+    },
+    {  # One-Shot Example: user input = function signature + problem description in docstring format
+        "role": "user",
+        "content": 'from typing import List\n\n\ndef candidate(...) -> bool:\n \"\"\" Check given a list of number.\"\"\"\n',
+    },
+    {  # One-Shot Example: model output = solution
+        "role": "assistant",
+        "content": 'Could you please provide more information on which criteria to check in this function?',
+    },
+]
+
+CODELLAMA_NL_2_PL_HUMANEVAL_V2 = [
+    {  # Instructions
+        "role": "system",
+        "content": "You are an expert software developer who writes high quality code. Given a coding problem, please either generate Python code, or ask clarifying questions. "
+        + "If you decide to generate code: please strictly follow these: Respond directly with code only with markdown! You need to return the complete function! Please only return code surrounded by markdown. Don't write down any thought processes!  \n\n",
+    },
+]
+
 NL_2_PL_HUMANEVAL = [
     {  # Instructions
         "role": "system",
@@ -69,8 +113,7 @@ NL_2_PL_HUMANEVAL = [
         + "You must use correct indentation! "
         + "Make sure your return statement is always inside the function! "
         + "Make sure your output always starts with an indentation of exactly 4 spaces! "
-        + "Output an indentation of 4 spaces first before you write anything else! "
-        + "You’d better be sure. \n\n",
+        + "Output an indentation of 4 spaces first before you write anything else! You’d better be sure. \n\n",
     },
     {  # One-Shot Example: user input = function signature + problem description in docstring format
         "role": "user",
@@ -357,50 +400,61 @@ def get_completion_starchat_pl_to_nl(prompt, user_input, model, tokenizer, args)
 def get_completion_codellama_instruct_nl_to_pl(
     prompt, user_input, model, tokenizer, args
 ):  # reference: https://github.com/facebookresearch/codellama/blob/main/llama/generation.py
-    # select the correct in-context learning prompt based on the task
-    messages = prompt + [{"role": "user", "content": user_input}]
+    
     formatted_prompt = ""
-    for msg in messages:
-        if msg["role"] == "user":
-            content = msg["content"].strip()
-            formatted_prompt += tokenizer.bos_token + f"{B_INST_CLLAMA} " + content + f" {E_INST_CLLAMA} "
-        elif msg["role"] == "assistant":
-            formatted_prompt += " " + msg["content"].strip() + " " + tokenizer.eos_token
-        # system prompt doesn't work well for Code Llama-Instructs
-        # elif msg["role"] == "system":
-        #     formatted_prompt += f"{B_SYS_CLLAMA}" + msg["content"] + f"{E_SYS_CLLAMA}"
+    # the template is being used
+    if prompt == '':
+        formatted_prompt = user_input 
+    else:
+    # select the correct in-context learning prompt based on the task
+        messages = prompt + [{"role": "user", "content": user_input}]
+    
+        for msg in messages:
+            if msg["role"] == "user":
+                content = msg["content"].strip()
+                formatted_prompt += tokenizer.bos_token + f"{B_INST_CLLAMA} " + content + f" {E_INST_CLLAMA} "
+            elif msg["role"] == "assistant":
+                formatted_prompt += " " + msg["content"].strip() + " " + tokenizer.eos_token
+            # system prompt doesn't work well for Code Llama-Instructs
+            elif msg["role"] == "system":
+                formatted_prompt += f"{B_SYS_CLLAMA}" + msg["content"] + f"{E_SYS_CLLAMA}"
+
     # Debug
-    # print(formatted_prompt)
+    print('\nformatted_prompt:\n',formatted_prompt)
+    
     output = generate_text(model, tokenizer, formatted_prompt, args)
     completion = output[0]["generated_text"]
 
+    print('\ncompletion:\n',completion)
+    return completion
+
     # post-processing
-    completion_lines = completion.split("\n")
-    processed_completion = ""
-    for line in completion_lines:
-        if line.startswith("    "):
-            processed_completion += line + "\n"
+    #completion_lines = completion.split("\n")
+    #processed_completion = ""
+    #for line in completion_lines:
+    #    if line.startswith("    "):
+    #        processed_completion += line + "\n"
 
     # remove extra docstring
     # find all occurrences of three consecutive double quotes
-    res = [i for i in range(len(processed_completion)) if processed_completion.startswith('"""', i)]
+    #res = [i for i in range(len(processed_completion)) if processed_completion.startswith('"""', i)]
     # if res is empty, check for both single quotes
-    if not res:
-        res = [i for i in range(len(processed_completion)) if processed_completion.startswith("'''", i)]
+    #if not res:
+    #    res = [i for i in range(len(processed_completion)) if processed_completion.startswith("'''", i)]
     # if found an extra docstring, remove it
-    if res:
+    #if res:
         # get end position of the extra docstring, remove everything before it
-        try:
-            end_position = res[1] + 3
-            processed_completion = processed_completion[end_position:]
-            if processed_completion.startswith("\n"):
-                processed_completion = processed_completion[1:]
-        except IndexError:
-            pass
+    #    try:
+    #        end_position = res[1] + 3
+    #        processed_completion = processed_completion[end_position:]
+    #        if processed_completion.startswith("\n"):
+    #            processed_completion = processed_completion[1:]
+    #    except IndexError:
+    #        pass
 
     # Debug
-    print(processed_completion)
-    return processed_completion
+    #print(processed_completion)
+    #return processed_completion
 
 
 def get_completion_codellama_instruct_pl_to_nl(prompt, user_input, model, tokenizer, args):
@@ -713,7 +767,7 @@ def generate_response_str(model, msgs, temperature, args, open_source_model, tok
     response_list = generate_response(model, msgs, 1, temperature, args, open_source_model, tokenizer)
     return response_list[0]
     
-def generate_response(model, msgs, topn, temperature, args, open_source_model, tokenizer):
+def generate_response(model, msgs, topn, temperature, args, open_source_model, tokenizer, user_input_without_prompt = ''):
     if args.model.startswith('starcoder'):
         user_input = tokenizer.apply_chat_template(msgs, tokenize=False)
         response_list = []
@@ -724,8 +778,31 @@ def generate_response(model, msgs, topn, temperature, args, open_source_model, t
         user_input = tokenizer.apply_chat_template(msgs, tokenize=False)
         response_list = []
         for i in range(topn):
-            response_list.append(get_completion_codellama('', user_input, open_source_model, tokenizer, args))
-        return response_list        
+            if 'two-shot' in args.model:
+                response_list.append(get_completion_codellama_instruct_nl_to_pl(CODELLAMA_NL_2_PL_HUMANEVAL, user_input_without_prompt, open_source_model, tokenizer, args))
+            else:
+                response_list.append(get_completion_codellama_instruct_nl_to_pl('', user_input, open_source_model, tokenizer, args))
+        return response_list
+    elif model == 'Okanagan':
+        # this code assume topn=1
+        # set the real model used by Okanagan
+        messages.append({"role": "user","content": OK_PROMPT_CODEGEN + user_input})
+        coder_response = generate_response_str(OK_MODEL, messages, temperature, args, open_source_model, tokenizer)
+
+        # Reflection
+        reflect_messages = [{"role": "user","content": OK_PROMPT_CLARIFY_Q.format(code=coder_response, problem=user_input)}]
+        # messages.append({"role": "assistant","content": coder_response})
+        # messages.append({"role": "user","content": OK_PROMPT_CLARIFY_Q})
+        communicator_response = generate_response_str(OK_MODEL, reflect_messages, temperature, args, open_source_model, tokenizer)
+        print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!", file=print_file)
+        print("!!!!!!!!!!!!!!! Okanagan !!!!!! communicator_response: \n" + communicator_response, file=print_file)
+        print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n", file=print_file)
+        #messages.append({"role": "assistant","content": communicator_response})
+        if  re.search('no_questions', communicator_response, re.IGNORECASE):
+            response_list.append(coder_response)
+        else:
+            response_list.append(communicator_response)    
+        return response_list  
     else:
         completion = openai.ChatCompletion.create(
             model=model,
@@ -738,39 +815,25 @@ def generate_response(model, msgs, topn, temperature, args, open_source_model, t
             response_list.append(i['message']['content'])
         return response_list
 
-def description_2_code_multi_rounds(prompt, user_input, original_prompt, model, topn, temperature, args, open_source_model, tokenizer):
+def description_2_code_multi_rounds(prompt, user_input, original_prompt, model, topn, temperature, args, open_source_model, tokenizer, cached_response, cached_qq, cached_answer):
     ## 1st round: initial code generation
-    full_prompt = prompt + user_input
+    full_prompt = OK_PROMPT_CODEGEN + user_input if model == 'Okanagan' else prompt + user_input
+    messages = []
+    response_list = []
+    model_2nd_round = OK_MODEL if model == 'Okanagan' else model
     print("\n\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!", file=print_file)
     print('!!!!!!!!!!!!! prompt:\n' + full_prompt, file=print_file)
     print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n", file=print_file)
-    messages = []
-    response_list = []
-    model_2nd_round = model
-    if model == 'Okanagan':
-        # this code assume topn=1
-        # set the real model used by Okanagan
-        ok_model = 'gpt-3.5-turbo-0125'
-        model_2nd_round = ok_model
-        messages.append({"role": "user","content": OK_PROMPT_CODEGEN + user_input})
-        coder_response = generate_response_str(ok_model, messages, temperature, args, open_source_model, tokenizer)
-
-        # Reflection
-        reflect_messages = [{"role": "user","content": OK_PROMPT_CLARIFY_Q.format(code=coder_response, problem=user_input)}]
-        # messages.append({"role": "assistant","content": coder_response})
-        # messages.append({"role": "user","content": OK_PROMPT_CLARIFY_Q})
-        communicator_response = generate_response_str(ok_model, reflect_messages, temperature, args, open_source_model, tokenizer)
-        print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!", file=print_file)
-        print("!!!!!!!!!!!!!!! Okanagan !!!!!! communicator_response: \n" + communicator_response, file=print_file)
-        print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n", file=print_file)
-        #messages.append({"role": "assistant","content": communicator_response})
-        if  re.search('no_questions', communicator_response, re.IGNORECASE):
-            response_list.append(coder_response)
-        else:
-            response_list.append(communicator_response)
+    
+    messages.append({"role": "user","content": full_prompt})
+    if args.log_phase_output >= 2:
+        response_list.append(cached_response)
     else:
-        messages.append({"role": "user","content": full_prompt})
-        response_list = generate_response(model, messages, topn, temperature, args, open_source_model, tokenizer)
+        response_list = generate_response(model, messages, topn, temperature, args, open_source_model, tokenizer, user_input)
+    
+    if args.log_phase_output == 1:
+        return response_list, [], [], []
+
     code_list = []
     qq_list = []
     ans_list = []
@@ -784,29 +847,36 @@ def description_2_code_multi_rounds(prompt, user_input, original_prompt, model, 
         print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n\n", file=print_file)
         question_quality = '0'
         answer = ''
-        ### comment out this due to GPU machine having no internet access to call openai
-        #if code == '':
+        if code == '':
             ## 2nd round: question & answer round
             
             # use LLM-based Evaluator to
             # 1) generate answer,
             # 2) evaluate quality of clarifying questions,
             # 3) generate new code with Q&A
-            #answer, question_quality = evaluate_clarifying_questions(original_prompt,response,full_prompt)
+            if args.log_phase_output >= 3:
+                answer = cached_answer
+                question_quality = cached_qq
+            else:
+                answer, question_quality = evaluate_clarifying_questions(original_prompt,response,full_prompt)
             
-            ## 3rd round: generate final code: generate 2nd-round code with chat history (Q&A)
-            #msgs_i = messages.copy()
-            #msgs_i.append({"role":"assistant","content": response})
-            #msgs_i.append({"role":"user","content": answer + PROMPT_2ND_ROUND})
-            
+            if args.log_phase_output == 2:
+                ans_list.append(answer)
+                qq_list.append(question_quality)
+                continue
 
-            #response_2nd = generate_response(model_2nd_round, msgs_i, 1, temperature, args, open_source_model, tokenizer)
-            #code = response_2_code_if_no_text(response_2nd[0])
+            ## 3rd round: generate final code: generate 2nd-round code with chat history (Q&A)
+            msgs_i = messages.copy()
+            msgs_i.append({"role":"assistant","content": response})
+            msgs_i.append({"role":"user","content": answer + PROMPT_2ND_ROUND})
             
-            #print("\n\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!", file=print_file)
-            #print('!!!!!!!!!!!!! 3rd CodeLLM input messages:\n', msgs_i, file=print_file)
-            #print('!!!!!!!!!!!!! 3rd CodeLLM response:\n', response_2nd, file=print_file)
-            #print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n\n", file=print_file)
+            response_2nd = generate_response(model_2nd_round, msgs_i, 1, temperature, args, open_source_model, tokenizer)
+            code = response_2_code_if_no_text(response_2nd[0])
+            
+            print("\n\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!", file=print_file)
+            print('!!!!!!!!!!!!! 3rd CodeLLM input messages:\n', msgs_i, file=print_file)
+            print('!!!!!!!!!!!!! 3rd CodeLLM response:\n', response_2nd, file=print_file)
+            print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n\n", file=print_file)
         qq_list.append(question_quality)
         code_list.append(code)
         ans_list.append(answer)
@@ -840,22 +910,22 @@ def response_2_code(response):
 
 # returns code only if the response consists solely of code with markups
 def response_2_code_if_no_text(response):
-     # adding optional spaces (`\s*`) allowed surrounding the markup. Was using ^```.*\n([\s\S]+?)\n```$ 
+    # Adjusted regular expression to allow optional surrounding whitespace
     code_template = re.compile(r'^\s*```.*?\n([\s\S]+?)\n```\s*$', re.M)
-    code = code_template.findall(response)
-    if len(code) > 0:
-        return code[-1]
-    return ''
-        
-def HumanEval_experiment(dataset, dataset_loc, option, model, sequence, topn, temperature, args, open_source_model, tokenizer):
+    match = code_template.match(response) # fullmatch should be used, but this is currently ok
+    if match:
+        return match.group(1)  # Return the code block (group 1)
+    return ''  # Return empty string if no match is found
+
+def HumanEval_experiment(dataset, dataset_loc, option, model, topn, temperature, args, open_source_model, tokenizer):
     remove_percentage = 0
     log_file = ''
     if option == 'original':
         log_file = './log/dataset_%s_model_%s_topn_%s_temperature_%s.log_%s' % \
-                   (dataset, model, topn, temperature, sequence)
+                   (dataset, model, topn, temperature, str(args.log_phase_input))
     else:
         log_file = './log/%s_dataset_%s_model_%s_topn_%s_temperature_%s.log_%s' % \
-                   (option, dataset, model, topn, temperature, sequence)
+                   (option, dataset, model, topn, temperature, str(args.log_phase_input))
         remove_percentage = string_to_int(get_ith_element(option, 1))
     
     # write printed output to a file (print_file)
@@ -867,22 +937,30 @@ def HumanEval_experiment(dataset, dataset_loc, option, model, sequence, topn, te
     line_cnt = 0
     with open(dataset_loc, 'r') as f:
         for line in f.readlines():
-            problem_list.append(json.loads(line))
+            if args.min_problem_idx < 0 or line_cnt >= args.min_problem_idx:
+                problem_list.append(json.loads(line))
             # added by JW
             line_cnt += 1
-            if args.max_num_problems >= 0 and line_cnt==args.max_num_problems:
+            if args.max_num_problems >= 0 and line_cnt >= args.max_num_problems:
                 break
     # names with prompt type (e.g. 'HumanEval/X_promptX')
-    names = set()
+    cached_names = set()
+    cached_responses = {}
+    cached_answers = {}
+    cached_qqs = {}
     if os.path.exists(log_file):
         with open(log_file, 'r') as f:
             for line in f:
                 content = json.loads(line)
-                names.add(content['name']+'_'+content['prompt_type'])
+                key = content['name']+'_'+content['prompt_type']
+                cached_names.add(key)
+                cached_responses[key] = content['response']
+                cached_answers[key] = content['answer']
+                cached_qqs[key] = content['question_quality']
 
     response_list = []
     for problem in problem_list:
-        print('----------------------problem name: %s--------------------------------' % (problem['task_id']), flush=True)
+        print('----------------------problem name: %s--------------------------------' % (problem['name']), flush=True)
         print('using %s to generate response' % (model), flush=True)
         
         if dataset == "HumanEvalComm":
@@ -893,11 +971,11 @@ def HumanEval_experiment(dataset, dataset_loc, option, model, sequence, topn, te
         for input_prompt in input_prompt_fields:
             if input_prompt not in problem:
                 continue
-            
-            if problem['task_id'] + '_' + input_prompt in names:
+            key = problem['name'] + '_' + input_prompt
+            if args.log_phase_input == args.log_phase_output and key in cached_names:
                 continue
             print("********************************************************************", file=print_file)
-            print("****** new problem (name="+problem['task_id']+" input_prompt="+input_prompt+") ******", file=print_file)
+            print("****** new problem (name="+problem['name']+" input_prompt="+input_prompt+") ******", file=print_file)
             print("********************************************************************", file=print_file)
             description = problem[input_prompt]
             try:
@@ -907,28 +985,48 @@ def HumanEval_experiment(dataset, dataset_loc, option, model, sequence, topn, te
                     response_list, code_list, qq_list = description_2_code_one_round(prompt, model, topn, temperature, args, open_source_model, tokenizer)
                 else:
                     original_prompt = PROMPT_START_3_v2 + problem['prompt']
-                    response_list, code_list, qq_list, ans_list = description_2_code_multi_rounds(PROMPT_START_3_v2, description, original_prompt, model, topn, temperature, args, open_source_model, tokenizer)
+                    response_list, code_list, qq_list, ans_list = description_2_code_multi_rounds(PROMPT_START_3_v2, description, original_prompt, model, topn, temperature, args, open_source_model, tokenizer, cached_responses.get(key, ''), cached_qqs.get(key, 0), cached_answers.get(key, ''))
             except Exception as e:
-                print('%s---------%s' % (problem['task_id'], e), flush=True)
+                print('%s---------%s' % (problem['name'], e), flush=True)
                 continue
             for i in range(len(response_list)):
-            
-                res = {
-                    'name': problem['task_id'],
-                    'index': i,
-                    'response': response_list[i],
-                    'original_prompt': description,
-                    'modified_prompt': prompt,
-                    'prompt_type': input_prompt,
-                    'code': code_list[i],
-                    'question_quality': qq_list[i],
-                    'answer': ans_list[i],
-                }
-                print('response %s is writting into file' % (i), flush=True)
-                json_str = json.dumps(res)
-                with open(log_file, 'a') as f:
-                    f.write(json_str + '\n')
-            print('%s finish!' % (problem['task_id']), flush=True)
+                if args.log_phase_output >= 1:
+                    res = {
+                        'key': key,
+                        'name': problem['name'],
+                        'prompt_type': input_prompt,
+                        'index': i,
+                        'response': response_list[i],
+                        'answer': ans_list[i] if i < len(ans_list) else '',
+                        'question_quality': qq_list[i] if i < len(qq_list) else '0',
+                    }
+                    print('response %s is writting into file' % (i), flush=True)
+                    json_str = json.dumps(res)
+
+                    # Find the last occurrence of '.log_' in the string
+                    last_index = log_file.rfind('.log_')
+                    # Remove the substring from the last occurrence of '.log_' to the end, then add new suffix
+                    log_file_output = log_file[:last_index] + '.log_' + str(args.log_phase_output)
+                    
+                    with open(log_file_output, 'a') as f:
+                        f.write(json_str + '\n')
+                else:
+                    res = {
+                        'name': problem['name'],
+                        'index': i,
+                        'response': response_list[i],
+                        'original_prompt': description,
+                        'modified_prompt': prompt,
+                        'prompt_type': input_prompt,
+                        'code': code_list[i],
+                        'question_quality': qq_list[i],
+                        'answer': ans_list[i],
+                    }
+                    print('response %s is writting into file' % (i), flush=True)
+                    json_str = json.dumps(res)
+                    with open(log_file, 'a') as f:
+                        f.write(json_str + '\n')
+            print('%s finish!' % (problem['name']), flush=True)
             # stop with 1 prompt for debugging
             #break
     print('Done!', flush=True)
@@ -1008,18 +1106,33 @@ if __name__ == "__main__":
         default='original'
     )
     parser.add_argument(
-        "-s",
-        "--sequence",
-        type=str,
-        help="Choose the order of the experiment",
-        default='0'
+        "-s", # legacy
+        "--log_phase_input",
+        choices=[0,1,2,3],
+        type=int,
+        help="If not 0, this split the process into phase 1 (1st round LLM response),2 (2nd, answers to questions),3 (3rd, final code generation given chat history). This is name of input log file",
+        default=0
+    )
+    parser.add_argument(
+        "-so",
+        "--log_phase_output",
+        choices=[0,1,2,3],
+        type=int,
+        help="If not 0, this split the process into phase 1 (1st round LLM response),2 (2nd, answers to questions),3 (3rd, final code generation given chat history). This is name of output log file",
+        default=0
     )
     parser.add_argument(
         "-maxp",
         "--max_num_problems",
         type=int,
         help="Max number of problems to run", # limit the number of problems to be run and call ChatGPT. -1 means no such limit
-        required=True,
+        default=-1,
+    )
+    parser.add_argument(
+        "-minp",
+        "--min_problem_idx",
+        type=int,
+        help="Min index of problems to run", # limit the number of problems to be run. -1 means no such limit
         default=-1,
     )
     
@@ -1125,4 +1238,4 @@ if __name__ == "__main__":
         tokenizer.save_pretrained(args.saved_model_path)
         model.save_pretrained(args.saved_model_path)
     elif args.dataset.startswith('HumanEval'):
-        HumanEval_experiment(args.dataset, './HumanEval/'+args.dataset+'.jsonl', args.option, args.model, args.sequence, args.topn, args.temperature, args, model, tokenizer)
+        HumanEval_experiment(args.dataset, './HumanEval/'+args.dataset+'.jsonl', args.option, args.model, args.topn, args.temperature, args, model, tokenizer)
