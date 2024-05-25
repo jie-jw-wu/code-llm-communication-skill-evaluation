@@ -51,7 +51,7 @@ PROMPT_2ND_ROUND = '\n Given above conversations, generate Python code directly 
 OK_PROMPT_CODEGEN = 'Generate Python code directly (Markdown) to solve the coding problem. \n\n'
 OK_PROMPT_CLARIFY_Q = 'Given the programming problem, ask clarifying questions if the requirements in the given problem description are incomplete, inconsistent or ambiguous for solving the problem correctly and passing the tests. \n If no need to ask clarifying questions, return strictly \'NO_QUESTIONS\' only. Otherwise, return the clarifying questions. \n\n ### Problem: \n {problem}'
 OK_PROMPT_CLARIFY_Q_V1 = 'Given the coding problem description and the generated code above, decide whether to ask clarifying questions that are necessary to solve the problem correctly. \n If no need to ask clarifying questions, return strictly \'NO_QUESTIONS\' only. Otherwise, return the clarifying questions. \n\n'
-OK_MODEL = 'gpt-3.5-turbo-0125'
+OK_MODEL_DEFAULT = 'gpt-3.5-turbo-0125'
 
 # Instruction-tuned Models and Foundation Models have different nl_2_pl/pl_2_nl prompts and functions
 INSTRUCTION_MODELS = [
@@ -798,16 +798,16 @@ def generate_response(model, msgs, topn, temperature, args, open_source_model, t
             else:
                 response_list.append(get_completion_codellama_instruct_nl_to_pl('', user_input, open_source_model, tokenizer, args))
         return response_list
-    elif model == 'Okanagan':
+    elif model.startswith('Okanagan'):
         # this code assume topn=1
         # set the real model used by Okanagan
-        coder_response = generate_response_str(OK_MODEL, msgs, temperature, args, open_source_model, tokenizer)
+        coder_response = generate_response_str(get_ok_base_model(model), msgs, temperature, args, open_source_model, tokenizer)
 
         # Reflection
         reflect_messages = [{"role": "user","content": OK_PROMPT_CLARIFY_Q.format(code=coder_response, problem=user_input_without_prompt)}]
         # messages.append({"role": "assistant","content": coder_response})
         # messages.append({"role": "user","content": OK_PROMPT_CLARIFY_Q})
-        communicator_response = generate_response_str(OK_MODEL, reflect_messages, temperature, args, open_source_model, tokenizer)
+        communicator_response = generate_response_str(get_ok_base_model(model), reflect_messages, temperature, args, open_source_model, tokenizer)
         print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!", file=print_file)
         print("!!!!!!!!!!!!!!! Okanagan !!!!!! communicator_response: \n" + communicator_response, file=print_file)
         print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n", file=print_file)
@@ -828,12 +828,18 @@ def generate_response(model, msgs, topn, temperature, args, open_source_model, t
             response_list.append(i['message']['content'])
         return response_list
 
+def get_ok_base_model(model)
+    if '~' in model:
+        return model.split('~', 1)[1]
+    else:
+        return OK_MODEL_DEFAULT
+
 def description_2_code_multi_rounds(prompt, user_input, original_prompt, model, topn, temperature, args, open_source_model, tokenizer, cached_response, cached_qq, cached_answer):
     ## 1st round: initial code generation
-    full_prompt = OK_PROMPT_CODEGEN + user_input if model == 'Okanagan' else prompt + user_input
+    full_prompt = OK_PROMPT_CODEGEN + user_input if model.startswith('Okanagan') else prompt + user_input
     messages = []
     response_list = []
-    model_2nd_round = OK_MODEL if model == 'Okanagan' else model
+    model_2nd_round = get_ok_base_model(model) if model.startswith('Okanagan') else model
     print("\n\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!", file=print_file)
     print('!!!!!!!!!!!!! prompt:\n' + full_prompt, file=print_file)
     print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n", file=print_file)

@@ -125,3 +125,4 @@ sbatch scripts/sockeye_scripts/test_gpu_phase1.sh deepseek-llm-7b-chat deepseek-
 sbatch scripts/sockeye_scripts/test_gpu_phase1.sh CodeQwen1.5-7B-Chat Qwen/CodeQwen1.5-7B-Chat HumanEval
 sbatch scripts/sockeye_scripts/test_gpu_phase1.sh CodeLlama-13b-hf codellama/CodeLlama-13b-hf HumanEval
 sbatch scripts/sockeye_scripts/test_gpu_phase1.sh CodeLlama-7b-hf codellama/CodeLlama-7b-hf HumanEval
+sbatch scripts/sockeye_scripts/test_gpu_phase1.sh Okanagan~deepseek-coder-6.7b-instruct deepseek-ai/deepseek-coder-6.7b-instruct HumanEval
